@@ -1,0 +1,79 @@
+// Postgres Node - Fetch Approved Optimizations
+SELECT 
+  id,
+  prompt_id,
+  original_prompt,
+  optimized_prompt,
+  optimization_strategy,
+  original_pass_rate,
+  version
+FROM prompt_optimizations 
+WHERE status = 'approved_for_deployment'
+ORDER BY original_pass_rate ASC
+LIMIT 5;
+
+// Function Node - Prepare Deployment Package
+function() {
+  const optimizations = $input.all();
+  const deployments = [];
+  
+  for (const opt of optimizations) {
+    const data = opt.json;
+    
+    deployments.push({
+      deployment_id: `deploy_${data.id}_${Date.now()}`,
+      prompt_id: data.prompt_id,
+      old_prompt: data.original_prompt,
+      new_prompt: data.optimized_prompt,
+      strategy: data.optimization_strategy,
+      expected_improvement: Math.max(0.85 - data.original_pass_rate, 0.1),
+      deployment_type: data.original_pass_rate < 0.5 ? 'immediate' : 'ab_test',
+      rollback_plan: {
+        trigger_threshold: 0.7,
+        monitor_duration: '24h'
+      }
+    });
+  }
+  
+  return deployments;
+}
+
+// HTTP Request Node - Deploy to Governance System
+{
+  "method": "POST",
+  "url": "{{$env.GOVERNANCE_API}}/prompts/deploy",
+  "body": {
+    "deployment_id": "={{$json.deployment_id}}",
+    "prompt_id": "={{$json.prompt_id}}",
+    "new_prompt": "={{$json.new_prompt}}",
+    "deployment_config": {
+      "type": "={{$json.deployment_type}}",
+      "traffic_split": "={{$json.deployment_type === 'ab_test' ? 0.2 : 1.0}}",
+      "monitor_duration": "24h",
+      "rollback_threshold": 0.7
+    }
+  },
+  "headers": {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {{$env.GOVERNANCE_API_KEY}}"
+  }
+}
+
+// Postgres Node - Log Deployment
+INSERT INTO prompt_deployments (
+  deployment_id,
+  prompt_id,
+  deployed_version,
+  deployment_type,
+  deployed_at,
+  status,
+  expected_improvement
+) VALUES (
+  $json.deployment_id,
+  $json.prompt_id,
+  $('Function1').first().json.version,
+  $json.deployment_type,
+  NOW(),
+  'active',
+  $json.expected_improvement
+)

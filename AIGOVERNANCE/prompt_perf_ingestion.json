@@ -1,0 +1,102 @@
+{
+  "name": "Prompt Performance Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.GOVERNANCE_API}}/prompt-metrics",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBasicAuth",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3
+          }
+        }
+      },
+      "id": "http-request-node",
+      "name": "Fetch Performance Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const rawMetrics = $input.all();\nconst enrichedData = [];\n\nfor (const metric of rawMetrics) {\n  const data = metric.json;\n  \n  // Calculate derived metrics\n  const passRate = data.passes / (data.passes + data.failures);\n  const trustScore = data.trust_scores.reduce((a, b) => a + b) / data.trust_scores.length;\n  const hallucinationRate = data.hallucinations / data.total_runs;\n  \n  // Flag for optimization if below thresholds\n  const needsOptimization = \n    passRate < 0.85 || \n    trustScore < 0.7 || \n    hallucinationRate > 0.1;\n  \n  enrichedData.push({\n    prompt_id: data.prompt_id,\n    prompt_text: data.prompt_text,\n    pass_rate: passRate,\n    trust_score: trustScore,\n    hallucination_rate: hallucinationRate,\n    total_runs: data.total_runs,\n    needs_optimization: needsOptimization,\n    failure_patterns: data.failure_patterns || [],\n    timestamp: new Date().toISOString()\n  });\n}\n\n// Return only items that need optimization\nreturn enrichedData.filter(d => d.needs_optimization).map(item => ({json: item}));"
+      },
+      "id": "function-node",
+      "name": "Parse & Enrich Metrics",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "name"
+        },
+        "table": {
+          "__rl": true,
+          "value": "prompt_performance_log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "prompt_id": "={{$json.prompt_id}}",
+            "prompt_text": "={{$json.prompt_text}}",
+            "pass_rate": "={{$json.pass_rate}}",
+            "trust_score": "={{$json.trust_score}}",
+            "hallucination_rate": "={{$json.hallucination_rate}}",
+            "total_runs": "={{$json.total_runs}}",
+            "failure_patterns": "={{JSON.stringify($json.failure_patterns)}}",
+            "analyzed_at": "={{$json.timestamp}}"
+          }
+        }
+      },
+      "id": "postgres-node",
+      "name": "Store Analysis Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Fetch Performance Data": {
+      "main": [
+        [
+          {
+            "node": "Parse & Enrich Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Enrich Metrics": {
+      "main": [
+        [
+          {
+            "node": "Store Analysis Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "prompt-perf-ingestion",
+  "tags": []
+}

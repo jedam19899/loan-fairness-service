@@ -1,0 +1,153 @@
+{
+  "name": "Prompt Optimizer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "optimization-queue",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "optimization-queue"
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = $input.first().json;\n\nconst optimizationPrompts = {\n  hallucination_reduction: `\nYou are a prompt optimization specialist. Analyze this governance prompt and reduce hallucination risk:\n\nORIGINAL PROMPT:\n${data.original_prompt}\n\nPERFORMANCE ISSUES:\n- Pass Rate: ${(data.pass_rate * 100).toFixed(1)}%\n- Trust Score: ${(data.trust_score * 100).toFixed(1)}%\n- Primary Issue: Hallucination (${data.primary_issues.hallucination} occurrences)\n\nOPTIMIZATION REQUIREMENTS:\n1. Add explicit constraints against making up information\n2. Include verification steps\n3. Add \"I don't know\" escape clauses\n4. Strengthen source citation requirements\n5. Maintain original intent and governance requirements\n\nOUTPUT: Provide the optimized prompt only, no explanation.`,\n\n  policy_alignment: `\nYou are a prompt optimization specialist. Improve this governance prompt's policy compliance:\n\nORIGINAL PROMPT:\n${data.original_prompt}\n\nPERFORMANCE ISSUES:\n- Pass Rate: ${(data.pass_rate * 100).toFixed(1)}%\n- Policy Violations: ${data.primary_issues.policy_violation} occurrences\n\nOPTIMIZATION REQUIREMENTS:\n1. Strengthen policy adherence language\n2. Add explicit compliance checkpoints\n3. Include escalation procedures for edge cases\n4. Clarify boundary conditions\n5. Maintain governance effectiveness\n\nOUTPUT: Provide the optimized prompt only, no explanation.`,\n\n  format_constraints: `\nYou are a prompt optimization specialist. Fix formatting issues in this governance prompt:\n\nORIGINAL PROMPT:\n${data.original_prompt}\n\nPERFORMANCE ISSUES:\n- Format Errors: ${data.primary_issues.format_error} occurrences\n- Pass Rate: ${(data.pass_rate * 100).toFixed(1)}%\n\nOPTIMIZATION REQUIREMENTS:\n1. Add explicit output format specifications\n2. Include examples of correct format\n3. Add validation instructions\n4. Specify required fields and structure\n5. Maintain governance logic\n\nOUTPUT: Provide the optimized prompt only, no explanation.`,\n\n  general_improvement: `\nYou are a prompt optimization specialist. Improve this governance prompt's overall effectiveness:\n\nORIGINAL PROMPT:\n${data.original_prompt}\n\nPERFORMANCE METRICS:\n- Pass Rate: ${(data.pass_rate * 100).toFixed(1)}%\n- Trust Score: ${(data.trust_score * 100).toFixed(1)}%\n\nOPTIMIZATION REQUIREMENTS:\n1. Improve clarity and specificity\n2. Add relevant examples\n3. Strengthen success criteria\n4. Optimize for consistency\n5. Maintain governance requirements\n\nOUTPUT: Provide the optimized prompt only, no explanation.`\n};\n\nreturn [{\n  prompt_id: data.prompt_id,\n  optimization_request: optimizationPrompts[data.optimization_strategy],\n  strategy: data.optimization_strategy,\n  original_prompt: data.original_prompt,\n  original_metrics: {\n    pass_rate: data.pass_rate,\n    trust_score: data.trust_score\n  }\n}].map(item => ({json: item}));"
+      },
+      "id": "generate-optimization-prompt",
+      "name": "Generate Optimization Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{$json.optimization_request}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2000
+        }
+      },
+      "id": "openai-optimize",
+      "name": "Generate Optimized Prompt",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const optimization = $input.first().json;\nconst originalData = $('Generate Optimization Prompt').first().json;\n\nconst optimizedPrompt = optimization.choices[0].message.content.trim();\n\n// Basic validation\nif (optimizedPrompt.length < 50) {\n  throw new Error('Generated prompt too short');\n}\n\nif (!optimizedPrompt.toLowerCase().includes('governance')) {\n  throw new Error('Optimized prompt missing governance context');\n}\n\nreturn [{\n  prompt_id: originalData.prompt_id,\n  original_prompt: originalData.original_prompt,\n  optimized_prompt: optimizedPrompt,\n  optimization_strategy: originalData.strategy,\n  original_metrics: originalData.original_metrics,\n  generated_at: new Date().toISOString(),\n  status: 'ready_for_testing',\n  version: `v${Date.now()}`\n}].map(item => ({json: item}));"
+      },
+      "id": "validate-result",
+      "name": "Validate & Structure Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "name"
+        },
+        "table": {
+          "__rl": true,
+          "value": "prompt_optimizations",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "prompt_id": "={{$json.prompt_id}}",
+            "original_prompt": "={{$json.original_prompt}}",
+            "optimized_prompt": "={{$json.optimized_prompt}}",
+            "optimization_strategy": "={{$json.optimization_strategy}}",
+            "original_pass_rate": "={{$json.original_metrics.pass_rate}}",
+            "original_trust_score": "={{$json.original_metrics.trust_score}}",
+            "generated_at": "={{$json.generated_at}}",
+            "status": "={{$json.status}}",
+            "version": "={{$json.version}}"
+          }
+        }
+      },
+      "id": "store-optimization",
+      "name": "Store Optimized Prompt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate Optimization Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Optimization Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Optimized Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Optimized Prompt": {
+      "main": [
+        [
+          {
+            "node": "Validate & Structure Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Structure Result": {
+      "main": [
+        [
+          {
+            "node": "Store Optimized Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "prompt-optimizer",
+  "tags": []
+}

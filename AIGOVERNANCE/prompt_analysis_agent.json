@@ -1,0 +1,66 @@
+// Postgres Node - Fetch Underperforming Prompts
+SELECT 
+  prompt_id,
+  prompt_text,
+  pass_rate,
+  trust_score,
+  hallucination_rate,
+  failure_patterns,
+  COUNT(*) as analysis_count
+FROM prompt_performance_log 
+WHERE 
+  analyzed_at > NOW() - INTERVAL '24 hours'
+  AND (pass_rate < 0.85 OR trust_score < 0.7 OR hallucination_rate > 0.1)
+GROUP BY prompt_id, prompt_text, pass_rate, trust_score, hallucination_rate, failure_patterns
+HAVING COUNT(*) >= 3  -- Consistent underperformance
+ORDER BY pass_rate ASC, trust_score ASC
+LIMIT 10;
+
+// Function Node - Analyze Failure Patterns
+function() {
+  const prompts = $input.all();
+  const analysisResults = [];
+  
+  for (const prompt of prompts) {
+    const data = prompt.json;
+    
+    // Pattern analysis
+    const patterns = data.failure_patterns || [];
+    const commonIssues = {
+      hallucination: patterns.filter(p => p.includes('hallucin')).length,
+      policy_violation: patterns.filter(p => p.includes('policy')).length,
+      incomplete_response: patterns.filter(p => p.includes('incomplete')).length,
+      format_error: patterns.filter(p => p.includes('format')).length
+    };
+    
+    // Determine optimization strategy
+    let strategy = 'general_improvement';
+    if (commonIssues.hallucination > 5) strategy = 'hallucination_reduction';
+    if (commonIssues.policy_violation > 5) strategy = 'policy_alignment';
+    if (commonIssues.format_error > 5) strategy = 'format_constraints';
+    
+    analysisResults.push({
+      prompt_id: data.prompt_id,
+      original_prompt: data.prompt_text,
+      pass_rate: data.pass_rate,
+      trust_score: data.trust_score,
+      primary_issues: commonIssues,
+      optimization_strategy: strategy,
+      priority_score: (1 - data.pass_rate) * data.analysis_count,
+      ready_for_optimization: true
+    });
+  }
+  
+  return analysisResults.sort((a, b) => b.priority_score - a.priority_score);
+}
+
+// HTTP Request Node - Queue for Optimization
+{
+  "method": "POST",
+  "url": "{{$env.N8N_WEBHOOK_URL}}/optimization-queue",
+  "body": "={{$json}}",
+  "headers": {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {{$env.INTERNAL_API_KEY}}"
+  }
+}
